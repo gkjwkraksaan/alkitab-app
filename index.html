@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Bacaan Alkitab Harian</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+  <style>
+    body { background:#f5f7fa; }
+    .card { border-radius:10px; box-shadow:0 6px 18px rgba(0,0,0,0.06); }
+    .verse { display:block; margin:6px 0; line-height:1.5; }
+    .verse-num { font-weight:700; color:#0d6efd; margin-right:8px; }
+    .small-muted { color:#6c757d; }
+  </style>
+</head>
+<body>
+  <div class="container py-4">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+      <button id="prevBtn" class="btn btn-outline-primary btn-sm">⬅️ Kemarin</button>
+      <div class="text-center">
+        <h3 class="mb-0">📖 Bacaan Alkitab Harian</h3>
+        <div id="dateLabel" class="small-muted"></div>
+      </div>
+      <button id="nextBtn" class="btn btn-outline-primary btn-sm">Besok ➡️</button>
+    </div>
+
+    <div id="contentRow" class="row g-3"></div>
+
+    <p class="text-center mt-4 small-muted">Alkitab © LAI TB | Jadwal dari Google Sheet (opensheet.elk.sh)</p>
+  </div>
+
+<script>
+/****************************************************
+ * KONFIGURASI
+ ****************************************************/
+// Lokasi file Alkitab (relatif, akan bekerja di GitHub Pages)
+const BIBLE_JSON_URL = "./alkitab.json";
+
+// Jadwal bacaan dari Google Sheet via opensheet.elk.sh
+// 👉 ganti <SHEET_ID> dan <SheetName> sesuai sheet Anda
+const OPEN_SHEET_JSON_URL = "https://opensheet.elk.sh/<SHEET_ID>/<SheetName>";
+
+/****************************************************
+ * Variabel global
+ ****************************************************/
+let bibleData = null;
+let scheduleArray = [];
+let offsetDays = 0;
+
+/****************************************************
+ * Fungsi Load
+ ****************************************************/
+async function loadBible() {
+  if (bibleData) return bibleData;
+  const res = await fetch(BIBLE_JSON_URL);
+  if (!res.ok) throw new Error("Gagal load Alkitab.json: " + res.status);
+  bibleData = await res.json();
+  return bibleData;
+}
+
+async function loadSchedule() {
+  if (scheduleArray.length) return scheduleArray;
+  const res = await fetch(OPEN_SHEET_JSON_URL);
+  if (!res.ok) throw new Error("Gagal load jadwal: " + res.status);
+  const data = await res.json();
+  scheduleArray = Array.isArray(data) ? data : Object.values(data);
+  return scheduleArray;
+}
+
+/****************************************************
+ * Mapping nama kitab (alias)
+ ****************************************************/
+const bookAliases = {
+  "kej":"Kejadian","kejadian":"Kejadian",
+  "kel":"Keluaran","keluaran":"Keluaran",
+  "im":"Imamat","imamat":"Imamat",
+  "bil":"Bilangan","bilangan":"Bilangan",
+  "ul":"Ulangan","ulangan":"Ulangan",
+  "yos":"Yosua","yosua":"Yosua",
+  "hak":"Hakim-hakim","hakim":"Hakim-hakim","hakim-hakim":"Hakim-hakim",
+  "rut":"Rut",
+  "1sam":"1 Samuel","1 samuel":"1 Samuel",
+  "2sam":"2 Samuel","2 samuel":"2 Samuel",
+  "1raj":"1 Raja-raja","1 raja":"1 Raja-raja","1 raja-raja":"1 Raja-raja",
+  "2raj":"2 Raja-raja","2 raja":"2 Raja-raja","2 raja-raja":"2 Raja-raja",
+  "1taw":"1 Tawarikh","2taw":"2 Tawarikh",
+  "ezra":"Ezra","nehemia":"Nehemia","ester":"Ester",
+  "ayb":"Ayub","ayub":"Ayub",
+  "mzm":"Mazmur","ps":"Mazmur","mazmur":"Mazmur",
+  "ams":"Amsal","amsal":"Amsal",
+  "pkh":"Pengkhotbah","pengkhotbah":"Pengkhotbah",
+  "kid":"Kidung Agung","kidung":"Kidung Agung","kidung agung":"Kidung Agung",
+  "yes":"Yesaya","yesaya":"Yesaya",
+  "yer":"Yeremia","yeremia":"Yeremia",
+  "rat":"Ratapan","ratapan":"Ratapan",
+  "yeh":"Yehezkiel","yehezkiel":"Yehezkiel",
+  "dan":"Daniel","daniel":"Daniel",
+  "hos":"Hosea","hosea":"Hosea",
+  "yoel":"Yoel","amos":"Amos","obaja":"Obaja","yunus":"Yunus",
+  "mikha":"Mikha","nahum":"Nahum","hab":"Habakuk","zef":"Zefanya",
+  "hag":"Hagai","zak":"Zakharia","maleakhi":"Maleakhi",
+  "mat":"Matius","matius":"Matius",
+  "mrk":"Markus","markus":"Markus",
+  "luk":"Lukas","lukas":"Lukas",
+  "yoh":"Yohanes","yohanes":"Yohanes",
+  "kis":"Kisah Para Rasul","kisah":"Kisah Para Rasul",
+  "rom":"Roma","roma":"Roma",
+  "1kor":"1 Korintus","2kor":"2 Korintus",
+  "gal":"Galatia","ef":"Efesus","flp":"Filipi","kol":"Kolose",
+  "1tes":"1 Tesalonika","2tes":"2 Tesalonika",
+  "1tim":"1 Timotius","2tim":"2 Timotius",
+  "tit":"Titus","filemon":"Filemon","ibr":"Ibrani","yak":"Yakobus",
+  "1pet":"1 Petrus","2pet":"2 Petrus",
+  "1yoh":"1 Yohanes","2yoh":"2 Yohanes","3yoh":"3 Yohanes",
+  "yud":"Yudas","why":"Wahyu","wahyu":"Wahyu"
+};
+function normalizeBookName(name){
+  if(!name) return name;
+  const key = name.toLowerCase().trim();
+  return bookAliases[key] || name.trim();
+}
+
+/****************************************************
+ * Parser referensi ayat
+ ****************************************************/
+function splitBookAndRest(raw){
+  if(!raw) return ["",""];
+  const s = raw.trim().replace(/\s+/g,' ');
+  const match = s.match(/^(.+?)\s+(\d[\d:,\- ]*)$/);
+  if(match) return [match[1].trim(), match[2].trim()];
+  return [s,""];
+}
+
+function expandToken(token){
+  token = token.trim();
+  const out=[];
+  let m = token.match(/^(\d+):(\d+)-(\d+):(\d+)$/);
+  if(m){
+    const c1=+m[1],v1=+m[2],c2=+m[3],v2=+m[4];
+    for(let c=c1;c<=c2;c++){
+      if(c===c1&&c===c2) out.push({chapter:c,start:v1,end:v2});
+      else if(c===c1) out.push({chapter:c,start:v1,end:null});
+      else if(c===c2) out.push({chapter:c,start:1,end:v2});
+      else out.push({chapter:c,start:1,end:null});
+    }
+    return out;
+  }
+  m = token.match(/^(\d+):(\d+)-(\d+)$/);
+  if(m){ out.push({chapter:+m[1],start:+m[2],end:+m[3]}); return out; }
+  m = token.match(/^(\d+):(\d+)$/);
+  if(m){ out.push({chapter:+m[1],start:+m[2],end:+m[2]}); return out; }
+  m = token.match(/^(\d+)$/);
+  if(m){ out.push({chapter:+m[1],start:1,end:null}); return out; }
+  return out;
+}
+
+function getVersesFrom(bible,bookName,refString){
+  const book = normalizeBookName(bookName);
+  if(!bible[book]) return [`❌ Kitab "${bookName}" tidak ditemukan.`];
+  if(!refString) return [`❌ Referensi kosong`];
+  const tokens=refString.split(",").map(t=>t.trim()).filter(Boolean);
+  const out=[];
+  for(const token of tokens){
+    const exs=expandToken(token);
+    for(const ex of exs){
+      const ch=String(ex.chapter);
+      const chapObj=bible[book][ch];
+      if(!chapObj){ out.push(`❌ Pasal ${ch} tidak ada di ${book}`); continue; }
+      const verses=Object.keys(chapObj).map(Number).sort((a,b)=>a-b);
+      const last=verses[verses.length-1]||0;
+      const start=ex.start||1, end=ex.end||last;
+      for(let v=start;v<=end;v++){
+        if(chapObj[v]) out.push(`<span class="verse"><span class="verse-num">${v}</span>${chapObj[v]}</span>`);
+      }
+    }
+  }
+  return out.length?out:[`❌ Ayat tidak ditemukan (${book} ${refString})`];
+}
+
+/****************************************************
+ * Normalisasi tanggal
+ ****************************************************/
+function normalizeDateString(s){
+  if(!s) return "";
+  s=s.trim();
+  if(/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  if(/^\d{2}\/\d{2}\/\d{4}$/.test(s)){
+    const[dd,mm,yyyy]=s.split("/");
+    return `${yyyy}-${mm}-${dd}`;
+  }
+  const d=new Date(s); if(!isNaN(d)) return d.toISOString().slice(0,10);
+  return s;
+}
+
+/****************************************************
+ * Render
+ ****************************************************/
+function findEntryByDate(dateStr){
+  return scheduleArray.find(row=>{
+    for(const k in row){
+      if(normalizeDateString(row[k])===dateStr) return true;
+    }
+    return false;
+  });
+}
+
+function renderFor(dateObj){
+  const dateStr=dateObj.toISOString().slice(0,10);
+  document.getElementById("dateLabel").textContent=dateStr;
+  const container=document.getElementById("contentRow");
+  container.innerHTML="";
+  const entry=findEntryByDate(dateStr);
+  if(!entry){
+    container.innerHTML=`<div class="alert alert-warning">Tidak ada jadwal untuk ${dateStr}</div>`;
+    return;
+  }
+  let shown=0;
+  for(const k in entry){
+    if(!entry[k]) continue;
+    if(normalizeDateString(entry[k])===dateStr) continue;
+    const refText=String(entry[k]).trim();
+    if(!refText) continue;
+    const[bookPart,restPart]=splitBookAndRest(refText);
+    if(!restPart){ container.innerHTML+=`<div class="card p-3"><h6>${refText}</h6><div class="text-danger">❌ Format salah</div></div>`; continue; }
+    const versesHtml=getVersesFrom(bibleData,bookPart,restPart).join("");
+    shown++;
+    container.innerHTML+=`<div class="col-md-6"><div class="card p-3"><h6>Bacaan ${shown}: ${refText}</h6>${versesHtml}</div></div>`;
+  }
+}
+
+async function renderToday(){
+  try{
+    await loadBible();
+    await loadSchedule();
+    const d=new Date(); d.setDate(d.getDate()+offsetDays);
+    renderFor(d);
+  }catch(err){
+    document.getElementById("contentRow").innerHTML=`<div class="alert alert-danger">${err.message}</div>`;
+  }
+}
+
+document.getElementById("prevBtn").onclick=()=>{offsetDays--;renderToday();};
+document.getElementById("nextBtn").onclick=()=>{offsetDays++;renderToday();};
+renderToday();
+</script>
+</body>
+</html>
